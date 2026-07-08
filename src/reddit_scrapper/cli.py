@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .io_utils import append_jsonl, read_links_file, write_json
+from .io_utils import append_jsonl, copy_if_exists, read_links_file, write_json
 from .reddit_api import (
     build_session,
     end_date_to_exclusive_epoch,
@@ -30,6 +31,51 @@ def parse_date_utc(date_str: str) -> datetime:
 
 def to_epoch_seconds(dt: datetime) -> int:
     return int(dt.timestamp())
+
+
+def slugify(value: str | None, default: str) -> str:
+    if not value:
+        return default
+
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip().lower())
+    cleaned = cleaned.strip("-._")
+    return cleaned or default
+
+
+def resolve_run_paths(args: argparse.Namespace, run_id: str) -> dict[str, Path]:
+    subreddit_slug = slugify(args.subreddit, "links-only")
+
+    if args.subreddit and args.start_date and args.end_date:
+        period_slug = f"{args.start_date}_to_{args.end_date}"
+    else:
+        period_slug = "manual-links"
+
+    results_root = Path(args.results_root)
+    run_dir = results_root / f"subreddit={subreddit_slug}" / f"period={period_slug}" / f"run={run_id}"
+
+    output_path = Path(args.output)
+    if not output_path.is_absolute():
+        output_path = run_dir / output_path
+
+    pending_comments_path = Path(args.pending_comments_file)
+    if not pending_comments_path.is_absolute():
+        pending_comments_path = run_dir / pending_comments_path
+
+    checkpoint_path = Path(args.checkpoint_file)
+    if not checkpoint_path.is_absolute():
+        checkpoint_path = run_dir / checkpoint_path
+
+    summary_path = run_dir / "summary.json"
+    inputs_dir = run_dir / "inputs"
+
+    return {
+        "run_dir": run_dir,
+        "inputs_dir": inputs_dir,
+        "output_path": output_path,
+        "pending_comments_path": pending_comments_path,
+        "checkpoint_path": checkpoint_path,
+        "summary_path": summary_path,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,9 +112,14 @@ def parse_args() -> argparse.Namespace:
         help="JSONL file with pending comment ids discovered from more blocks",
     )
     parser.add_argument(
+        "--results-root",
+        default=os.getenv("REDDIT_RESULTS_ROOT", "results/runs"),
+        help="Root directory for organized run artifacts",
+    )
+    parser.add_argument(
         "--summary-dir",
         default=os.getenv("REDDIT_SUMMARY_DIR", "run_summaries"),
-        help="Directory where per-run summary JSON files are written",
+        help="Deprecated: kept for backward compatibility; summary is saved inside run directory",
     )
     parser.add_argument(
         "--requests-per-minute",
@@ -124,14 +175,21 @@ def main() -> None:
     min_delay_sec = 60.0 / max(args.requests_per_minute, 1.0)
     session = build_session(args.user_agent)
 
-    output_path = Path(args.output)
     links_path = Path(args.links_file)
-    checkpoint_path = Path(args.checkpoint_file)
-    pending_comments_path = Path(args.pending_comments_file)
-    summary_dir = Path(args.summary_dir)
 
     run_started_at = int(time.time())
     run_id = datetime.fromtimestamp(run_started_at, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_paths = resolve_run_paths(args, run_id)
+    run_dir = run_paths["run_dir"]
+    inputs_dir = run_paths["inputs_dir"]
+    output_path = run_paths["output_path"]
+    pending_comments_path = run_paths["pending_comments_path"]
+    checkpoint_path = run_paths["checkpoint_path"]
+    summary_path = run_paths["summary_path"]
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    links_snapshot_exists = copy_if_exists(links_path, inputs_dir / "links.txt")
 
     if args.no_resume:
         state = new_state_template()
@@ -185,7 +243,13 @@ def main() -> None:
         print("No pending links. Everything is already processed in checkpoint.")
         run_ended_at = int(time.time())
         summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
-        summary_path = summary_dir / f"summary_{run_id}.json"
+        summary["run_artifacts"] = {
+            "run_dir": str(run_dir),
+            "output": str(output_path),
+            "pending_comments": str(pending_comments_path),
+            "checkpoint": str(checkpoint_path),
+            "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
+        }
         write_json(summary_path, summary)
         print(f"Run summary: {summary_path}")
         return
@@ -241,7 +305,13 @@ def main() -> None:
 
     run_ended_at = int(time.time())
     summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
-    summary_path = summary_dir / f"summary_{run_id}.json"
+    summary["run_artifacts"] = {
+        "run_dir": str(run_dir),
+        "output": str(output_path),
+        "pending_comments": str(pending_comments_path),
+        "checkpoint": str(checkpoint_path),
+        "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
+    }
     write_json(summary_path, summary)
 
     print(
@@ -260,3 +330,4 @@ def main() -> None:
     print(f"PendingQueue={pending_comments_path}")
     print(f"Checkpoint={checkpoint_path}")
     print(f"RunSummary={summary_path}")
+    print(f"RunDir={run_dir}")

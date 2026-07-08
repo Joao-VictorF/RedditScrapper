@@ -30,9 +30,7 @@ python3 src/main.py \
 	--end-date 2026-06-30 \
 	--max-posts 0 \
 	--links-file links.txt \
-	--output corpus.jsonl \
-	--pending-comments-file pending_comments.jsonl \
-	--summary-dir run_summaries \
+	--results-root results/runs \
 	--requests-per-minute 10
 ```
 
@@ -41,6 +39,27 @@ Notas:
 - O fetch do subreddit e feito por `new.json` com filtro por `created_utc`.
 - `--max-posts 0` significa sem limite (usa apenas a janela de datas).
 - Isso facilita rodar por semestres e ir incrementando a base.
+
+## Estrutura organizada por run
+
+Cada execucao cria um diretório proprio em `results/runs`:
+
+```text
+results/runs/
+	subreddit=machinelearning/
+		period=2026-01-01_to_2026-06-30/
+			run=20260708T143221Z/
+				corpus.jsonl
+				pending_comments.jsonl
+				checkpoint.json
+				summary.json
+				inputs/
+					links.txt
+```
+
+`run_id` e o timestamp UTC da execucao no formato `YYYYMMDDTHHMMSSZ`.
+
+Isso permite organizar runs por dia/semana/mes/semestre/ano sem sobrescrever artefatos.
 
 ## Apenas links.txt
 
@@ -102,9 +121,11 @@ Averages ExtractedPerPost=4.00 PendingIdsPerPost=1.70
 
 ## Novos arquivos gerados
 
-- `checkpoint.json`: estado de progresso para retomar sem reler posts
+- `corpus.jsonl`: dados brutos do run
 - `pending_comments.jsonl`: fila de pendencias por post com ids de comentarios faltantes
-- `run_summaries/summary_<run_id>.json`: resumo completo daquela execucao
+- `checkpoint.json`: estado de progresso para retomar aquele run
+- `summary.json`: resumo completo daquela execucao
+- `inputs/links.txt`: snapshot do arquivo de links usado no run (se existir)
 
 ## JSON vs JSONL
 
