@@ -44,6 +44,7 @@ def slugify(value: str | None, default: str) -> str:
 
 def resolve_run_paths(args: argparse.Namespace, run_id: str) -> dict[str, Path]:
     subreddit_slug = slugify(args.subreddit, "links-only")
+    run_label_slug = slugify(args.run_label, "")
 
     if args.subreddit and args.start_date and args.end_date:
         period_slug = f"{args.start_date}_to_{args.end_date}"
@@ -51,7 +52,11 @@ def resolve_run_paths(args: argparse.Namespace, run_id: str) -> dict[str, Path]:
         period_slug = "manual-links"
 
     results_root = Path(args.results_root)
-    run_dir = results_root / f"subreddit={subreddit_slug}" / f"period={period_slug}" / f"run={run_id}"
+    run_folder = f"run={run_id}"
+    if run_label_slug:
+        run_folder = f"run={run_id}__label={run_label_slug}"
+
+    run_dir = results_root / f"subreddit={subreddit_slug}" / f"period={period_slug}" / run_folder
 
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -110,6 +115,11 @@ def parse_args() -> argparse.Namespace:
         "--pending-comments-file",
         default=os.getenv("REDDIT_PENDING_COMMENTS_FILE", "pending_comments.jsonl"),
         help="JSONL file with pending comment ids discovered from more blocks",
+    )
+    parser.add_argument(
+        "--run-label",
+        default=os.getenv("REDDIT_RUN_LABEL", ""),
+        help="Optional label to identify the run in folder names and summary",
     )
     parser.add_argument(
         "--results-root",
@@ -245,6 +255,7 @@ def main() -> None:
         summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
         summary["run_artifacts"] = {
             "run_dir": str(run_dir),
+            "run_label": args.run_label or None,
             "output": str(output_path),
             "pending_comments": str(pending_comments_path),
             "checkpoint": str(checkpoint_path),
@@ -307,6 +318,7 @@ def main() -> None:
     summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
     summary["run_artifacts"] = {
         "run_dir": str(run_dir),
+        "run_label": args.run_label or None,
         "output": str(output_path),
         "pending_comments": str(pending_comments_path),
         "checkpoint": str(checkpoint_path),

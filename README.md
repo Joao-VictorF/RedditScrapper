@@ -28,6 +28,7 @@ python3 src/main.py \
 	--subreddit MachineLearning \
 	--start-date 2026-01-01 \
 	--end-date 2026-06-30 \
+	--run-label semester-1 \
 	--max-posts 0 \
 	--links-file links.txt \
 	--results-root results/runs \
@@ -39,6 +40,7 @@ Notas:
 - O fetch do subreddit e feito por `new.json` com filtro por `created_utc`.
 - `--max-posts 0` significa sem limite (usa apenas a janela de datas).
 - Isso facilita rodar por semestres e ir incrementando a base.
+- `--run-label` ajuda a diferenciar execucoes (ex.: `semester-1`, `week-27`, `retry-high-depth`).
 
 ## Estrutura organizada por run
 
@@ -56,6 +58,12 @@ results/runs/
 				inputs/
 					links.txt
 ```
+
+			Com label:
+
+			```text
+			results/runs/subreddit=machinelearning/period=2026-01-01_to_2026-06-30/run=20260708T143221Z__label=semester-1/
+			```
 
 `run_id` e o timestamp UTC da execucao no formato `YYYYMMDDTHHMMSSZ`.
 
