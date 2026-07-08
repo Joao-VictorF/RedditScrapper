@@ -15,6 +15,10 @@ class RedditBlockedError(RuntimeError):
     """Raised when Reddit blocks requests from this runtime environment."""
 
 
+class RedditInvalidCookieError(ValueError):
+    """Raised when the provided cookie cannot be encoded as an HTTP header."""
+
+
 def normalize_post_url(raw_url: str) -> str:
     url = raw_url.strip()
     if not url:
@@ -39,6 +43,12 @@ def build_session(user_agent: str, cookie: str | None = None) -> requests.Sessio
         "Accept": "application/json",
     }
     if cookie:
+        try:
+            cookie.encode("latin-1")
+        except UnicodeEncodeError as exc:
+            raise RedditInvalidCookieError(
+                "Cookie contains non-latin1 characters (often caused by copied ellipsis '…' or truncated value)."
+            ) from exc
         headers["Cookie"] = cookie
     session.headers.update(headers)
     return session
@@ -54,6 +64,10 @@ def request_json(
     for attempt in range(max_retries):
         try:
             response = session.get(url, params=params, timeout=30)
+        except UnicodeEncodeError as exc:
+            raise RedditInvalidCookieError(
+                "Cookie header is invalid for HTTP transport. Copy the raw Cookie header as a single line, without ellipsis or truncation."
+            ) from exc
         except requests.RequestException:
             sleep_for = min(60, (2**attempt) + random.random())
             time.sleep(max(min_delay_sec, sleep_for))

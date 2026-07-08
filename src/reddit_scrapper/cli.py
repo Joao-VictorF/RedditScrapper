@@ -10,6 +10,7 @@ from pathlib import Path
 from .io_utils import append_jsonl, copy_if_exists, read_links_file, write_json
 from .reddit_api import (
     RedditBlockedError,
+    RedditInvalidCookieError,
     build_session,
     end_date_to_exclusive_epoch,
     fetch_post_document,
@@ -188,11 +189,6 @@ def main() -> None:
     args = parse_args()
     start_date, end_date = validate_date_args(args)
 
-    min_delay_sec = 60.0 / max(args.requests_per_minute, 1.0)
-    session = build_session(args.user_agent, cookie=(args.reddit_cookie or None))
-
-    links_path = Path(args.links_file)
-
     run_started_at = int(time.time())
     run_id = datetime.fromtimestamp(run_started_at, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_paths = resolve_run_paths(args, run_id)
@@ -204,6 +200,47 @@ def main() -> None:
     summary_path = run_paths["summary_path"]
 
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    min_delay_sec = 60.0 / max(args.requests_per_minute, 1.0)
+    try:
+        session = build_session(args.user_agent, cookie=(args.reddit_cookie or None))
+    except RedditInvalidCookieError as exc:
+        run_ended_at = int(time.time())
+        run_stats = {
+            "candidate_links": 0,
+            "skipped_already_processed": 0,
+            "saved": 0,
+            "failed": 1,
+            "expected_comments": 0,
+            "extracted_comments": 0,
+            "more_placeholders": 0,
+            "pending_comment_ids": 0,
+            "posts_with_pending_comments": 0,
+        }
+        summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
+        summary["errors"] = [
+            {
+                "phase": "setup",
+                "type": "invalid_cookie",
+                "message": str(exc),
+                "hint": "Copy the exact Cookie request header from browser DevTools as one line. Do not include ellipsis '…'.",
+            }
+        ]
+        summary["run_artifacts"] = {
+            "run_dir": str(run_dir),
+            "run_label": args.run_label or None,
+            "output": str(output_path),
+            "pending_comments": str(pending_comments_path),
+            "checkpoint": str(checkpoint_path),
+            "links_snapshot": None,
+        }
+        write_json(summary_path, summary)
+        print("[ERROR] Invalid cookie format for HTTP header.")
+        print("Hint: copy the raw Cookie request header in one line and remove any ellipsis character.")
+        print(f"RunSummary={summary_path}")
+        return
+
+    links_path = Path(args.links_file)
 
     links_snapshot_exists = copy_if_exists(links_path, inputs_dir / "links.txt")
 
