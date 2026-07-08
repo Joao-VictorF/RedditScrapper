@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .io_utils import append_jsonl, copy_if_exists, read_links_file, write_json
 from .reddit_api import (
+    RedditBlockedError,
     build_session,
     end_date_to_exclusive_epoch,
     fetch_post_document,
@@ -151,6 +152,11 @@ def parse_args() -> argparse.Namespace:
         help="Reddit User-Agent",
     )
     parser.add_argument(
+        "--reddit-cookie",
+        default=os.getenv("REDDIT_COOKIE", ""),
+        help="Optional Cookie header value from browser session (advanced)",
+    )
+    parser.add_argument(
         "--checkpoint-file",
         default=os.getenv("REDDIT_CHECKPOINT_FILE", "checkpoint.json"),
         help="Checkpoint path used to resume progress",
@@ -183,7 +189,7 @@ def main() -> None:
     start_date, end_date = validate_date_args(args)
 
     min_delay_sec = 60.0 / max(args.requests_per_minute, 1.0)
-    session = build_session(args.user_agent)
+    session = build_session(args.user_agent, cookie=(args.reddit_cookie or None))
 
     links_path = Path(args.links_file)
 
@@ -211,14 +217,50 @@ def main() -> None:
     if args.subreddit and start_date and end_date:
         start_ts = to_epoch_seconds(start_date)
         end_exclusive_ts = end_date_to_exclusive_epoch(end_date)
-        subreddit_links = iter_subreddit_permalinks_by_date(
-            session=session,
-            subreddit=args.subreddit,
-            start_ts=start_ts,
-            end_exclusive_ts=end_exclusive_ts,
-            max_posts=args.max_posts,
-            min_delay_sec=min_delay_sec,
-        )
+        try:
+            subreddit_links = iter_subreddit_permalinks_by_date(
+                session=session,
+                subreddit=args.subreddit,
+                start_ts=start_ts,
+                end_exclusive_ts=end_exclusive_ts,
+                max_posts=args.max_posts,
+                min_delay_sec=min_delay_sec,
+            )
+        except RedditBlockedError as exc:
+            run_ended_at = int(time.time())
+            run_stats = {
+                "candidate_links": 0,
+                "skipped_already_processed": 0,
+                "saved": 0,
+                "failed": 1,
+                "expected_comments": 0,
+                "extracted_comments": 0,
+                "more_placeholders": 0,
+                "pending_comment_ids": 0,
+                "posts_with_pending_comments": 0,
+            }
+            summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
+            summary["errors"] = [
+                {
+                    "phase": "discovery",
+                    "type": "reddit_blocked",
+                    "message": str(exc),
+                    "hint": "Try running from another network/runtime or pass --reddit-cookie from an authenticated browser session.",
+                }
+            ]
+            summary["run_artifacts"] = {
+                "run_dir": str(run_dir),
+                "run_label": args.run_label or None,
+                "output": str(output_path),
+                "pending_comments": str(pending_comments_path),
+                "checkpoint": str(checkpoint_path),
+                "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
+            }
+            write_json(summary_path, summary)
+            print("[ERROR] Reddit blocked this environment (HTTP 403 Blocked).")
+            print(f"Hint: use --reddit-cookie or try another network/runtime.")
+            print(f"RunSummary={summary_path}")
+            return
 
     all_links = explicit_links + subreddit_links
     seen: set[str] = set()

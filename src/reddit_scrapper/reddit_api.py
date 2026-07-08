@@ -11,6 +11,10 @@ import requests
 BASE_URL = "https://www.reddit.com"
 
 
+class RedditBlockedError(RuntimeError):
+    """Raised when Reddit blocks requests from this runtime environment."""
+
+
 def normalize_post_url(raw_url: str) -> str:
     url = raw_url.strip()
     if not url:
@@ -28,9 +32,15 @@ def normalize_post_url(raw_url: str) -> str:
     return f"{BASE_URL}{path}"
 
 
-def build_session(user_agent: str) -> requests.Session:
+def build_session(user_agent: str, cookie: str | None = None) -> requests.Session:
     session = requests.Session()
-    session.headers.update({"User-Agent": user_agent})
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/json",
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+    session.headers.update(headers)
     return session
 
 
@@ -48,6 +58,16 @@ def request_json(
             sleep_for = min(60, (2**attempt) + random.random())
             time.sleep(max(min_delay_sec, sleep_for))
             continue
+
+        content_type = (response.headers.get("content-type") or "").lower()
+        body_prefix = response.text[:200].lower() if response.text else ""
+
+        if response.status_code == 403 and "text/html" in content_type:
+            if "blocked" in body_prefix or "theme-beta" in body_prefix:
+                raise RedditBlockedError(
+                    "Reddit returned 403 Blocked HTML for this request. "
+                    "This environment appears blocked for direct API scraping."
+                )
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")

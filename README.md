@@ -107,6 +107,26 @@ Cada linha inclui metadados do post e comentarios achatados:
 - URL de post + .json normalmente retorna o post e parte da arvore de comentarios.
 - Nem sempre vem tudo: podem existir blocos do tipo more, threads continuadas e limitacoes de profundidade.
 - Use User-Agent proprio e limite conservador de requests.
+- Se Reddit responder `403 Blocked` no cliente Python, o script agora salva um `summary.json` com erro amigavel em vez de stacktrace bruto.
+
+## Quando o ambiente estiver bloqueado (403)
+
+Alguns ambientes de rede/runtime podem ser bloqueados pelo Reddit para scraping direto.
+Nesses casos, voce pode tentar:
+
+- rodar em outro runtime/rede
+- passar cookie de sessao autenticada do navegador (avancado)
+
+Exemplo:
+
+```bash
+python3 src/main.py \
+	--subreddit AskReddit \
+	--start-date 2026-07-08 \
+	--end-date 2026-07-08 \
+	--max-posts 2 \
+	--reddit-cookie 'reddit_session=...; other_cookie=...'
+```
 
 ## Metricas no final da execucao
 
