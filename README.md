@@ -21,18 +21,26 @@ https://www.reddit.com/r/MachineLearning/comments/abc123/example_post/
 https://www.reddit.com/r/MachineLearning/comments/def456/another_post/
 ```
 
-## Coleta por subreddit e links.txt ao mesmo tempo
+## Coleta por subreddit em janela de datas (recomendado)
 
 ```bash
 python3 src/main.py \
 	--subreddit MachineLearning \
-	--listing top \
-	--time-filter year \
-	--max-posts 300 \
+	--start-date 2026-01-01 \
+	--end-date 2026-06-30 \
+	--max-posts 0 \
 	--links-file links.txt \
 	--output corpus.jsonl \
+	--pending-comments-file pending_comments.jsonl \
+	--summary-dir run_summaries \
 	--requests-per-minute 10
 ```
+
+Notas:
+
+- O fetch do subreddit e feito por `new.json` com filtro por `created_utc`.
+- `--max-posts 0` significa sem limite (usa apenas a janela de datas).
+- Isso facilita rodar por semestres e ir incrementando a base.
 
 ## Apenas links.txt
 
@@ -47,7 +55,8 @@ Por padrao o script salva checkpoint e retoma automaticamente, evitando reler os
 ```bash
 python3 src/main.py \
 	--subreddit MachineLearning \
-	--max-posts 1000 \
+	--start-date 2026-01-01 \
+	--end-date 2026-06-30 \
 	--output corpus.jsonl \
 	--checkpoint-file checkpoint.json
 ```
@@ -80,14 +89,22 @@ Ao terminar, o script imprime:
 - Failed: posts com falha
 - ExpectedComments: soma de num_comments dos posts
 - ExtractedComments: comentarios realmente extraidos (kind t1)
+- PendingCommentIds: ids de comentarios pendentes (vindos de blocos more)
 - Coverage: ExtractedComments / ExpectedComments
 - MorePlaceholders: quantidade de blocos more encontrados
 
 Exemplo:
 
 ```text
-Summary Saved=200 Failed=0 ExpectedComments=1000 ExtractedComments=800 Coverage=80.00% MorePlaceholders=125
+Summary Saved=200 Failed=0 ExpectedComments=1000 ExtractedComments=800 PendingCommentIds=340
+Averages ExtractedPerPost=4.00 PendingIdsPerPost=1.70
 ```
+
+## Novos arquivos gerados
+
+- `checkpoint.json`: estado de progresso para retomar sem reler posts
+- `pending_comments.jsonl`: fila de pendencias por post com ids de comentarios faltantes
+- `run_summaries/summary_<run_id>.json`: resumo completo daquela execucao
 
 ## JSON vs JSONL
 
