@@ -29,6 +29,9 @@ python3 src/main.py \
 	--start-date 2026-01-01 \
 	--end-date 2026-06-30 \
 	--run-label semester-1 \
+	--structured-logs \
+	--rag-min-comment-chars 20 \
+	--rag-max-comments 200 \
 	--max-posts 0 \
 	--links-file links.txt \
 	--results-root results/runs \
@@ -52,6 +55,7 @@ results/runs/
 		period=2026-01-01_to_2026-06-30/
 			run=20260708T143221Z/
 				corpus.jsonl
+				coverage_posts.jsonl
 				pending_comments.jsonl
 				checkpoint.json
 				summary.json
@@ -59,11 +63,11 @@ results/runs/
 					links.txt
 ```
 
-			Com label:
+Com label:
 
-			```text
-			results/runs/subreddit=machinelearning/period=2026-01-01_to_2026-06-30/run=20260708T143221Z__label=semester-1/
-			```
+```text
+results/runs/subreddit=machinelearning/period=2026-01-01_to_2026-06-30/run=20260708T143221Z__label=semester-1/
+```
 
 `run_id` e o timestamp UTC da execucao no formato `YYYYMMDDTHHMMSSZ`.
 
@@ -150,10 +154,29 @@ Averages ExtractedPerPost=4.00 PendingIdsPerPost=1.70
 ## Novos arquivos gerados
 
 - `corpus.jsonl`: dados brutos do run
+- `coverage_posts.jsonl`: cobertura por post (expected/extracted/pending antes/depois)
 - `pending_comments.jsonl`: fila de pendencias por post com ids de comentarios faltantes
 - `checkpoint.json`: estado de progresso para retomar aquele run
 - `summary.json`: resumo completo daquela execucao
 - `inputs/links.txt`: snapshot do arquivo de links usado no run (se existir)
+
+## Filtros de qualidade para RAG
+
+- `--rag-min-comment-chars`: descarta comentarios muito curtos no payload derivado de RAG.
+- `--rag-max-comments`: limita quantidade de comentarios no campo derivado para evitar documentos muito grandes.
+
+Esses filtros nao removem os dados brutos do post, apenas o payload derivado em `rag`.
+
+## Logging estruturado
+
+Use `--structured-logs` para emitir eventos JSON por fase (`setup`, `discovery`, `fetch`, `write`, `summary`).
+Isso ajuda a monitorar execucoes longas e facilita troubleshooting em madrugada.
+
+## Rodar testes
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
 
 ## JSON vs JSONL
 

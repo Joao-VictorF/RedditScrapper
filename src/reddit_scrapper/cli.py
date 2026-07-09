@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .io_utils import append_jsonl, copy_if_exists, read_links_file, write_json
+from .logging_utils import StructuredLogger
 from .reddit_api import (
     RedditBlockedError,
     RedditInvalidCookieError,
@@ -73,6 +74,7 @@ def resolve_run_paths(args: argparse.Namespace, run_id: str) -> dict[str, Path]:
         checkpoint_path = run_dir / checkpoint_path
 
     summary_path = run_dir / "summary.json"
+    coverage_posts_path = run_dir / "coverage_posts.jsonl"
     inputs_dir = run_dir / "inputs"
 
     return {
@@ -82,6 +84,7 @@ def resolve_run_paths(args: argparse.Namespace, run_id: str) -> dict[str, Path]:
         "pending_comments_path": pending_comments_path,
         "checkpoint_path": checkpoint_path,
         "summary_path": summary_path,
+        "coverage_posts_path": coverage_posts_path,
     }
 
 
@@ -140,6 +143,11 @@ def parse_args() -> argparse.Namespace:
         help="Global request rate",
     )
     parser.add_argument(
+        "--structured-logs",
+        action="store_true",
+        help="Emit JSON logs per phase/event for long runs",
+    )
+    parser.add_argument(
         "--comment-sort",
         default="top",
         choices=["confidence", "top", "new", "controversial", "old", "qa"],
@@ -147,6 +155,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--comment-limit", type=int, default=500, help="Comment listing limit")
     parser.add_argument("--comment-depth", type=int, default=10, help="Comment tree depth")
+    parser.add_argument(
+        "--rag-min-comment-chars",
+        type=int,
+        default=int(os.getenv("REDDIT_RAG_MIN_COMMENT_CHARS", "20")),
+        help="Minimum comment length to keep in RAG derived fields",
+    )
+    parser.add_argument(
+        "--rag-max-comments",
+        type=int,
+        default=int(os.getenv("REDDIT_RAG_MAX_COMMENTS", "200")),
+        help="Maximum number of comments stored in RAG derived fields per post",
+    )
     parser.add_argument(
         "--user-agent",
         default=os.getenv("REDDIT_USER_AGENT", DEFAULT_USER_AGENT),
@@ -185,12 +205,61 @@ def validate_date_args(args: argparse.Namespace) -> tuple[datetime | None, datet
     return start_date, end_date
 
 
+def update_subreddit_coverage(coverage_map: dict[str, dict[str, int]], subreddit: str, post_stats: dict[str, int]) -> None:
+    key = (subreddit or "unknown").lower()
+    entry = coverage_map.setdefault(
+        key,
+        {
+            "posts": 0,
+            "expected_comments": 0,
+            "extracted_comments": 0,
+            "pending_comment_ids_before_expansion": 0,
+            "pending_comment_ids_after_expansion": 0,
+            "pending_comment_ids_resolved": 0,
+            "rag_comments_kept": 0,
+            "rag_comments_filtered": 0,
+        },
+    )
+    entry["posts"] += 1
+    entry["expected_comments"] += int(post_stats.get("expected_comments", 0) or 0)
+    entry["extracted_comments"] += int(post_stats.get("extracted_comments", 0) or 0)
+    entry["pending_comment_ids_before_expansion"] += int(post_stats.get("pending_comment_ids_before_expansion", 0) or 0)
+    entry["pending_comment_ids_after_expansion"] += int(post_stats.get("pending_comment_ids_after_expansion", 0) or 0)
+    entry["pending_comment_ids_resolved"] += int(post_stats.get("pending_comment_ids_resolved", 0) or 0)
+    entry["rag_comments_kept"] += int(post_stats.get("rag_comments_kept", 0) or 0)
+    entry["rag_comments_filtered"] += int(post_stats.get("rag_comments_filtered", 0) or 0)
+
+
+def empty_run_stats() -> dict[str, int | dict[str, dict[str, int]]]:
+    return {
+        "candidate_links": 0,
+        "skipped_already_processed": 0,
+        "saved": 0,
+        "failed": 0,
+        "expected_comments": 0,
+        "extracted_comments": 0,
+        "extracted_comments_before_expansion": 0,
+        "extracted_comments_after_expansion": 0,
+        "more_placeholders": 0,
+        "pending_comment_ids": 0,
+        "pending_comment_ids_before_expansion": 0,
+        "pending_comment_ids_resolved": 0,
+        "pending_comment_ids_after_expansion": 0,
+        "posts_with_pending_comments": 0,
+        "rag_comments_kept": 0,
+        "rag_comments_filtered": 0,
+        "coverage_by_subreddit": {},
+    }
+
+
 def main() -> None:
     args = parse_args()
     start_date, end_date = validate_date_args(args)
 
     run_started_at = int(time.time())
     run_id = datetime.fromtimestamp(run_started_at, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    logger = StructuredLogger(run_id=run_id, enabled=args.structured_logs)
+
     run_paths = resolve_run_paths(args, run_id)
     run_dir = run_paths["run_dir"]
     inputs_dir = run_paths["inputs_dir"]
@@ -198,25 +267,18 @@ def main() -> None:
     pending_comments_path = run_paths["pending_comments_path"]
     checkpoint_path = run_paths["checkpoint_path"]
     summary_path = run_paths["summary_path"]
+    coverage_posts_path = run_paths["coverage_posts_path"]
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    logger.log("setup", "run_paths_resolved", run_dir=str(run_dir))
 
     min_delay_sec = 60.0 / max(args.requests_per_minute, 1.0)
     try:
         session = build_session(args.user_agent, cookie=(args.reddit_cookie or None))
     except RedditInvalidCookieError as exc:
         run_ended_at = int(time.time())
-        run_stats = {
-            "candidate_links": 0,
-            "skipped_already_processed": 0,
-            "saved": 0,
-            "failed": 1,
-            "expected_comments": 0,
-            "extracted_comments": 0,
-            "more_placeholders": 0,
-            "pending_comment_ids": 0,
-            "posts_with_pending_comments": 0,
-        }
+        run_stats = empty_run_stats()
+        run_stats["failed"] = 1
         summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
         summary["errors"] = [
             {
@@ -230,6 +292,7 @@ def main() -> None:
             "run_dir": str(run_dir),
             "run_label": args.run_label or None,
             "output": str(output_path),
+            "coverage_posts": str(coverage_posts_path),
             "pending_comments": str(pending_comments_path),
             "checkpoint": str(checkpoint_path),
             "links_snapshot": None,
@@ -241,8 +304,8 @@ def main() -> None:
         return
 
     links_path = Path(args.links_file)
-
     links_snapshot_exists = copy_if_exists(links_path, inputs_dir / "links.txt")
+    logger.log("setup", "inputs_snapshot", links_snapshot_exists=links_snapshot_exists)
 
     if args.no_resume:
         state = new_state_template()
@@ -250,6 +313,8 @@ def main() -> None:
         state = load_checkpoint(checkpoint_path)
 
     explicit_links = read_links_file(links_path)
+    logger.log("discovery", "explicit_links_loaded", count=len(explicit_links), links_file=str(links_path))
+
     subreddit_links: list[str] = []
     if args.subreddit and start_date and end_date:
         start_ts = to_epoch_seconds(start_date)
@@ -265,17 +330,8 @@ def main() -> None:
             )
         except RedditBlockedError as exc:
             run_ended_at = int(time.time())
-            run_stats = {
-                "candidate_links": 0,
-                "skipped_already_processed": 0,
-                "saved": 0,
-                "failed": 1,
-                "expected_comments": 0,
-                "extracted_comments": 0,
-                "more_placeholders": 0,
-                "pending_comment_ids": 0,
-                "posts_with_pending_comments": 0,
-            }
+            run_stats = empty_run_stats()
+            run_stats["failed"] = 1
             summary = build_run_summary(run_id, run_started_at, run_ended_at, args, run_stats)
             summary["errors"] = [
                 {
@@ -289,15 +345,18 @@ def main() -> None:
                 "run_dir": str(run_dir),
                 "run_label": args.run_label or None,
                 "output": str(output_path),
+                "coverage_posts": str(coverage_posts_path),
                 "pending_comments": str(pending_comments_path),
                 "checkpoint": str(checkpoint_path),
                 "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
             }
             write_json(summary_path, summary)
             print("[ERROR] Reddit blocked this environment (HTTP 403 Blocked).")
-            print(f"Hint: use --reddit-cookie or try another network/runtime.")
+            print("Hint: use --reddit-cookie or try another network/runtime.")
             print(f"RunSummary={summary_path}")
             return
+
+    logger.log("discovery", "subreddit_links_loaded", count=len(subreddit_links), subreddit=args.subreddit)
 
     all_links = explicit_links + subreddit_links
     seen: set[str] = set()
@@ -308,17 +367,9 @@ def main() -> None:
             seen.add(normalized)
             kept_links.append(normalized)
 
-    run_stats = {
-        "candidate_links": len(kept_links),
-        "skipped_already_processed": 0,
-        "saved": 0,
-        "failed": 0,
-        "expected_comments": 0,
-        "extracted_comments": 0,
-        "more_placeholders": 0,
-        "pending_comment_ids": 0,
-        "posts_with_pending_comments": 0,
-    }
+    run_stats = empty_run_stats()
+    run_stats["candidate_links"] = len(kept_links)
+    logger.log("discovery", "candidate_links_ready", candidate_links=len(kept_links))
 
     if not kept_links:
         print("No links to process. Provide --subreddit+dates and/or a non-empty links file.")
@@ -327,6 +378,12 @@ def main() -> None:
     processed_set = set(state.get("processed_links", []))
     pending_links = [link for link in kept_links if link not in processed_set]
     run_stats["skipped_already_processed"] = len(kept_links) - len(pending_links)
+    logger.log(
+        "discovery",
+        "resume_filter_applied",
+        pending_links=len(pending_links),
+        skipped_already_processed=run_stats["skipped_already_processed"],
+    )
 
     if not pending_links:
         print("No pending links. Everything is already processed in checkpoint.")
@@ -336,6 +393,7 @@ def main() -> None:
             "run_dir": str(run_dir),
             "run_label": args.run_label or None,
             "output": str(output_path),
+            "coverage_posts": str(coverage_posts_path),
             "pending_comments": str(pending_comments_path),
             "checkpoint": str(checkpoint_path),
             "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
@@ -345,6 +403,7 @@ def main() -> None:
         return
 
     for link in pending_links:
+        logger.log("fetch", "post_fetch_started", link=link)
         try:
             doc = fetch_post_document(
                 session=session,
@@ -353,23 +412,52 @@ def main() -> None:
                 comment_sort=args.comment_sort,
                 comment_limit=args.comment_limit,
                 comment_depth=args.comment_depth,
+                rag_min_comment_chars=args.rag_min_comment_chars,
+                rag_max_comments=args.rag_max_comments,
             )
             append_jsonl(output_path, doc)
+            logger.log("write", "post_written", post_id=doc.get("id"), output=str(output_path))
 
             post_stats = doc.get("stats", {})
             pending_ids = doc.get("pending_comment_ids", [])
+            subreddit_name = doc.get("subreddit") or "unknown"
 
             state["saved"] = int(state.get("saved", 0)) + 1
             state["expected_comments"] = int(state.get("expected_comments", 0)) + int(post_stats.get("expected_comments", 0) or 0)
             state["extracted_comments"] = int(state.get("extracted_comments", 0)) + int(post_stats.get("extracted_comments", 0) or 0)
             state["more_placeholders"] = int(state.get("more_placeholders", 0)) + int(post_stats.get("more_placeholders", 0) or 0)
-            state["pending_comment_ids"] = int(state.get("pending_comment_ids", 0)) + int(post_stats.get("pending_comment_ids", 0) or 0)
+            state["pending_comment_ids"] = int(state.get("pending_comment_ids", 0)) + int(post_stats.get("pending_comment_ids_before_expansion", 0) or 0)
 
             run_stats["saved"] += 1
             run_stats["expected_comments"] += int(post_stats.get("expected_comments", 0) or 0)
             run_stats["extracted_comments"] += int(post_stats.get("extracted_comments", 0) or 0)
+            run_stats["extracted_comments_before_expansion"] += int(post_stats.get("extracted_comments_before_expansion", 0) or 0)
+            run_stats["extracted_comments_after_expansion"] += int(post_stats.get("extracted_comments_after_expansion", 0) or 0)
             run_stats["more_placeholders"] += int(post_stats.get("more_placeholders", 0) or 0)
-            run_stats["pending_comment_ids"] += int(post_stats.get("pending_comment_ids", 0) or 0)
+            run_stats["pending_comment_ids"] += int(post_stats.get("pending_comment_ids_before_expansion", 0) or 0)
+            run_stats["pending_comment_ids_before_expansion"] += int(post_stats.get("pending_comment_ids_before_expansion", 0) or 0)
+            run_stats["pending_comment_ids_resolved"] += int(post_stats.get("pending_comment_ids_resolved", 0) or 0)
+            run_stats["pending_comment_ids_after_expansion"] += int(post_stats.get("pending_comment_ids_after_expansion", 0) or 0)
+            run_stats["rag_comments_kept"] += int(post_stats.get("rag_comments_kept", 0) or 0)
+            run_stats["rag_comments_filtered"] += int(post_stats.get("rag_comments_filtered", 0) or 0)
+
+            update_subreddit_coverage(run_stats["coverage_by_subreddit"], subreddit_name, post_stats)
+
+            coverage_payload = {
+                "run_id": run_id,
+                "post_id": doc.get("id"),
+                "subreddit": subreddit_name,
+                "expected_comments": int(post_stats.get("expected_comments", 0) or 0),
+                "extracted_comments": int(post_stats.get("extracted_comments", 0) or 0),
+                "coverage_ratio": float(post_stats.get("coverage_ratio", 1.0) or 1.0),
+                "pending_comment_ids_before_expansion": int(post_stats.get("pending_comment_ids_before_expansion", 0) or 0),
+                "pending_comment_ids_after_expansion": int(post_stats.get("pending_comment_ids_after_expansion", 0) or 0),
+                "pending_resolution_rate": float(post_stats.get("pending_resolution_rate", 1.0) or 1.0),
+                "rag_comments_kept": int(post_stats.get("rag_comments_kept", 0) or 0),
+                "rag_comments_filtered": int(post_stats.get("rag_comments_filtered", 0) or 0),
+            }
+            append_jsonl(coverage_posts_path, coverage_payload)
+
             if pending_ids:
                 run_stats["posts_with_pending_comments"] += 1
                 pending_payload = {
@@ -384,10 +472,12 @@ def main() -> None:
                     "pending_comment_ids_count": len(pending_ids),
                 }
                 append_jsonl(pending_comments_path, pending_payload)
+                logger.log("write", "pending_comment_ids_written", post_id=doc.get("id"), count=len(pending_ids))
         except Exception as exc:
             state["failed"] = int(state.get("failed", 0)) + 1
             run_stats["failed"] += 1
             print(f"[WARN] Failed to fetch post: {link} | {exc}")
+            logger.log("fetch", "post_fetch_failed", link=link, error=str(exc))
 
         processed_set.add(link)
         state["processed_links"] = sorted(processed_set)
@@ -399,11 +489,13 @@ def main() -> None:
         "run_dir": str(run_dir),
         "run_label": args.run_label or None,
         "output": str(output_path),
+        "coverage_posts": str(coverage_posts_path),
         "pending_comments": str(pending_comments_path),
         "checkpoint": str(checkpoint_path),
         "links_snapshot": str(inputs_dir / "links.txt") if links_snapshot_exists else None,
     }
     write_json(summary_path, summary)
+    logger.log("summary", "run_summary_written", summary_path=str(summary_path))
 
     print(
         "Summary "

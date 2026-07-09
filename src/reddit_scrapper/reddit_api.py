@@ -19,6 +19,59 @@ class RedditInvalidCookieError(ValueError):
     """Raised when the provided cookie cannot be encoded as an HTTP header."""
 
 
+def _is_useful_comment_text(text: str, min_chars: int) -> bool:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in {"[deleted]", "[removed]"}:
+        return False
+    return len(cleaned) >= min_chars
+
+
+def _build_rag_payload(
+    post_title: str,
+    post_selftext: str,
+    comments: list[dict[str, Any]],
+    min_comment_chars: int,
+    max_comments: int,
+) -> dict[str, Any]:
+    post_title = (post_title or "").strip()
+    post_selftext = (post_selftext or "").strip()
+    post_text = post_title
+    if post_selftext:
+        post_text = f"{post_title}\n\n{post_selftext}".strip()
+
+    comment_texts: list[str] = []
+    filtered_out = 0
+    for comment in comments:
+        if comment.get("kind") == "more":
+            continue
+        body = comment.get("body", "")
+        if not _is_useful_comment_text(body, min_comment_chars):
+            filtered_out += 1
+            continue
+
+        comment_texts.append(body.strip())
+        if len(comment_texts) >= max_comments:
+            break
+
+    combined_parts = [post_text] if post_text else []
+    if comment_texts:
+        combined_parts.append("\n\n".join(comment_texts))
+
+    combined_text = "\n\n".join(part for part in combined_parts if part)
+    return {
+        "post_text": post_text,
+        "comment_texts": comment_texts,
+        "combined_text": combined_text,
+        "stats": {
+            "comments_kept": len(comment_texts),
+            "comments_filtered": filtered_out,
+        },
+    }
+
+
 def normalize_post_url(raw_url: str) -> str:
     url = raw_url.strip()
     if not url:
@@ -31,7 +84,7 @@ def normalize_post_url(raw_url: str) -> str:
 
     path = parsed.path.rstrip("/")
     if path.endswith(".json"):
-        path = path[:-5]
+        path = path[:-5].rstrip("/")
 
     return f"{BASE_URL}{path}"
 
@@ -173,6 +226,8 @@ def fetch_post_document(
     comment_sort: str,
     comment_limit: int,
     comment_depth: int,
+    rag_min_comment_chars: int,
+    rag_max_comments: int,
 ) -> dict[str, Any]:
     normalized = normalize_post_url(post_url)
     json_url = f"{normalized}.json"
@@ -192,6 +247,14 @@ def fetch_post_document(
     expected_comments = int(post.get("num_comments", 0) or 0)
     coverage_ratio = (extracted_comments / expected_comments) if expected_comments > 0 else 1.0
     pending_comment_ids = collect_pending_comment_ids(comments)
+    rag_payload = _build_rag_payload(
+        post_title=post.get("title", ""),
+        post_selftext=post.get("selftext", ""),
+        comments=comments,
+        min_comment_chars=rag_min_comment_chars,
+        max_comments=rag_max_comments,
+    )
+    rag_stats = rag_payload["stats"]
 
     return {
         "source": "reddit_public_json",
@@ -219,11 +282,23 @@ def fetch_post_document(
         "stats": {
             "expected_comments": expected_comments,
             "extracted_comments": extracted_comments,
+            "extracted_comments_before_expansion": extracted_comments,
+            "extracted_comments_after_expansion": extracted_comments,
             "more_placeholders": more_placeholders,
-            "pending_comment_ids": pending_comment_ids_count,
+            "pending_comment_ids_before_expansion": pending_comment_ids_count,
+            "pending_comment_ids_resolved": 0,
+            "pending_comment_ids_after_expansion": pending_comment_ids_count,
+            "pending_resolution_rate": 0.0 if pending_comment_ids_count > 0 else 1.0,
             "coverage_ratio": round(coverage_ratio, 4),
+            "rag_comments_kept": rag_stats["comments_kept"],
+            "rag_comments_filtered": rag_stats["comments_filtered"],
         },
         "pending_comment_ids": pending_comment_ids,
+        "rag": {
+            "post_text": rag_payload["post_text"],
+            "comment_texts": rag_payload["comment_texts"],
+            "combined_text": rag_payload["combined_text"],
+        },
         "comments": comments,
     }
 

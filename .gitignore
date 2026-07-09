@@ -17,6 +17,9 @@ dist/
 .coverage
 htmlcov/
 
+# Scraper generated artifacts
+results/
+
 # macOS
 .DS_Store
 .env
