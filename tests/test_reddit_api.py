@@ -9,6 +9,26 @@ from reddit_scrapper import reddit_api
 
 
 class TestRedditApi(TestCase):
+    def test_parse_cookie_header_basic(self):
+        raw = "loid=abc; session_tracker=x.y.z; token_v2=a=b=c"
+        parsed = reddit_api.parse_cookie_header(raw)
+        self.assertEqual(parsed["loid"], "abc")
+        self.assertEqual(parsed["session_tracker"], "x.y.z")
+        self.assertEqual(parsed["token_v2"], "a=b=c")
+
+    def test_parse_cookie_header_with_cookie_prefix(self):
+        raw = "Cookie: loid=abc; csv=2"
+        parsed = reddit_api.parse_cookie_header(raw)
+        self.assertEqual(parsed, {"loid": "abc", "csv": "2"})
+
+    def test_build_session_populates_cookie_jar_from_raw_header(self):
+        session = reddit_api.build_session(
+            user_agent="test-agent",
+            cookie="Cookie: loid=abc; token_v2=a=b=c",
+        )
+        self.assertEqual(session.cookies.get("loid"), "abc")
+        self.assertEqual(session.cookies.get("token_v2"), "a=b=c")
+
     def test_normalize_post_url_full(self):
         url = "https://www.reddit.com/r/AskReddit/comments/abc123/test-post/"
         self.assertEqual(

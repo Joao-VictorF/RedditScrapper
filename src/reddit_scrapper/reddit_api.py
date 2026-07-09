@@ -19,6 +19,34 @@ class RedditInvalidCookieError(ValueError):
     """Raised when the provided cookie cannot be encoded as an HTTP header."""
 
 
+def parse_cookie_header(raw_cookie: str) -> dict[str, str]:
+    """Parse a raw Cookie header string into a dict suitable for requests cookies."""
+    normalized = (raw_cookie or "").strip()
+    if not normalized:
+        return {}
+
+    if normalized.lower().startswith("cookie:"):
+        normalized = normalized.split(":", 1)[1].strip()
+
+    cookies: dict[str, str] = {}
+    for pair in normalized.split(";"):
+        chunk = pair.strip()
+        if not chunk:
+            continue
+
+        name, sep, value = chunk.partition("=")
+        if not sep:
+            continue
+
+        key = name.strip()
+        if not key:
+            continue
+
+        cookies[key] = value.strip()
+
+    return cookies
+
+
 def _is_useful_comment_text(text: str, min_chars: int) -> bool:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -102,7 +130,13 @@ def build_session(user_agent: str, cookie: str | None = None) -> requests.Sessio
             raise RedditInvalidCookieError(
                 "Cookie contains non-latin1 characters (often caused by copied ellipsis '…' or truncated value)."
             ) from exc
-        headers["Cookie"] = cookie
+
+        parsed_cookies = parse_cookie_header(cookie)
+        if parsed_cookies:
+            session.cookies.update(parsed_cookies)
+        else:
+            headers["Cookie"] = cookie.strip()
+
     session.headers.update(headers)
     return session
 
