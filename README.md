@@ -178,6 +178,29 @@ Isso ajuda a monitorar execucoes longas e facilita troubleshooting em madrugada.
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+## Importar dumps anuais (script separado)
+
+Quando voce ja baixou arquivos JSONL de posts e comments (ex.: Arctic Shift), use o importador dedicado para montar um corpus no mesmo formato do scraper atual.
+
+Exemplo:
+
+```bash
+python3 src/import_archive.py \
+	--posts-file ../posts_2021-05-17-2022-05-17.jsonl \
+	--comments-file ../comments_2021-05-17_2022-05-17.jsonl \
+	--subreddit plantedtank \
+	--output results/imported/corpus_plantedtank_2021_2022.jsonl \
+	--summary-file results/imported/summary_plantedtank_2021_2022.json \
+	--tmp-db .tmp/import_plantedtank_2021_2022.sqlite3
+```
+
+Notas:
+
+- Esse fluxo e aditivo: nao altera o scraper de `src/main.py`.
+- O importador junta comments aos posts via `link_id` -> `post_id`.
+- `summary` traz volume importado e cobertura agregada.
+- Em dumps historicos, `ExtractedComments` pode ser maior que `num_comments` do post (snapshot em tempos diferentes).
+
 ## JSON vs JSONL
 
 - JSON unico: um unico arquivo com um array gigante. Pior para append e para recuperar em caso de queda.

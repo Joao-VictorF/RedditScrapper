@@ -19,6 +19,7 @@ htmlcov/
 
 # Scraper generated artifacts
 results/
+.tmp/
 
 # macOS
 .DS_Store
