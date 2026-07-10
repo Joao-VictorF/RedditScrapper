@@ -201,6 +201,25 @@ Notas:
 - `summary` traz volume importado e cobertura agregada.
 - Em dumps historicos, `ExtractedComments` pode ser maior que `num_comments` do post (snapshot em tempos diferentes).
 
+### Importacao em lote (todos os anos baixados)
+
+Para processar automaticamente todos os pares `posts_*.jsonl` e `comments_*.jsonl` de uma pasta:
+
+```bash
+python3 src/import_archive_batch.py \
+	--input-dir .. \
+	--subreddit plantedtank \
+	--output-dir results/imported \
+	--tmp-db-dir .tmp \
+	--skip-existing
+```
+
+Opcional para validar sem executar:
+
+```bash
+python3 src/import_archive_batch.py --input-dir .. --subreddit plantedtank --dry-run
+```
+
 ## JSON vs JSONL
 
 - JSON unico: um unico arquivo com um array gigante. Pior para append e para recuperar em caso de queda.
