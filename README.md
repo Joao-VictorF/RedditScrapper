@@ -167,6 +167,38 @@ Purpose:
 - Merge and deduplicate comments for overlapping posts.
 - Recompute `stats` and `rag` fields.
 
+## Next Dataset Step: Build Clean RAG Chunks
+
+Script: `src/build_rag_chunks.py`
+
+Purpose:
+
+- Read merged corpus JSONL.
+- Apply cleaning (empty text, `[deleted]`, `[removed]`, short comments, optional low-score filtering).
+- Build chunked retrieval documents with overlap and metadata for vector indexing.
+
+Example:
+
+```bash
+python3 src/build_rag_chunks.py \
+  --input results/imported/corpus_plantedtank_merged.jsonl \
+  --output results/rag/chunks_plantedtank.jsonl \
+  --summary-file results/rag/chunks_plantedtank_summary.json \
+  --min-comment-chars 20 \
+  --max-chunk-tokens 700 \
+  --overlap-comments 2
+```
+
+Smoke test:
+
+```bash
+python3 src/build_rag_chunks.py \
+  --input results/imported/corpus_plantedtank_merged.jsonl \
+  --output results/rag/chunks_plantedtank_smoke.jsonl \
+  --summary-file results/rag/chunks_plantedtank_smoke_summary.json \
+  --max-posts 200
+```
+
 ## RAG Guidance
 
 See `docs/RAG_PIPELINE.md` for a full implementation checklist (cleaning, chunking, embedding, indexing, evaluation).
