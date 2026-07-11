@@ -1,6 +1,20 @@
-# reddit-scrapper
+# Reddit Knowledge Ingestor
 
-Scraper para endpoints publicos JSON do Reddit, com saida JSONL para pipeline de chunk, embedding e RAG.
+Repository for collecting Reddit posts/comments and preparing high-quality datasets for RAG pipelines.
+
+Suggested repository rename:
+
+- `reddit-knowledge-ingestor`
+- Alternative: `reddit-rag-ingestor`
+
+## What This Project Includes
+
+Two retrieval modes are supported:
+
+1. Live Reddit retrieval (`src/main.py`) via public Reddit JSON endpoints.
+2. Historical dump import (`src/import_archive.py`, `src/import_archive_batch.py`) from external datasets (for example Arctic Shift exports).
+
+This separation is intentional: live retrieval is great for recent windows and incremental updates, while dump import is best for deep history backfill.
 
 ## Setup
 
@@ -10,220 +24,156 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Entrada de links especificos
+## Retrieval Mode 1: Live Reddit JSON (Current Script)
 
-Crie um arquivo links.txt na raiz, com um link por linha.
-
-Exemplo:
-
-```text
-https://www.reddit.com/r/MachineLearning/comments/abc123/example_post/
-https://www.reddit.com/r/MachineLearning/comments/def456/another_post/
-```
-
-## Coleta por subreddit em janela de datas (recomendado)
+Run:
 
 ```bash
 python3 src/main.py \
-	--subreddit MachineLearning \
-	--start-date 2026-01-01 \
-	--end-date 2026-06-30 \
-	--run-label semester-1 \
-	--structured-logs \
-	--rag-min-comment-chars 20 \
-	--rag-max-comments 200 \
-	--max-posts 0 \
-	--links-file links.txt \
-	--results-root results/runs \
-	--requests-per-minute 10
+  --subreddit MachineLearning \
+  --start-date 2026-01-01 \
+  --end-date 2026-06-30 \
+  --max-posts 0 \
+  --run-label semester-1 \
+  --requests-per-minute 10 \
+  --structured-logs \
+  --rag-min-comment-chars 20 \
+  --rag-max-comments 200
 ```
 
-Notas:
+You can also add direct links through `links.txt`.
 
-- O fetch do subreddit e feito por `new.json` com filtro por `created_utc`.
-- `--max-posts 0` significa sem limite (usa apenas a janela de datas).
-- Isso facilita rodar por semestres e ir incrementando a base.
-- `--run-label` ajuda a diferenciar execucoes (ex.: `semester-1`, `week-27`, `retry-high-depth`).
+### Cookie Authentication (Important)
 
-## Estrutura organizada por run
+In many environments, live Reddit requests only work reliably when an authenticated browser cookie is provided. In practice, this is often the difference between successful retrieval and `403 Blocked`.
 
-Cada execucao cria um diretório proprio em `results/runs`:
+Recommended pattern:
+
+1. Copy the full `Cookie:` request header from browser DevTools (Network tab).
+2. Export it as `REDDIT_COOKIE` in the same terminal session.
+3. Run the script with `--reddit-cookie "$REDDIT_COOKIE"`.
+
+Example:
+
+```bash
+export REDDIT_COOKIE='Cookie: loid=...; reddit_session=...; token_v2=...'
+python3 src/main.py \
+  --subreddit MachineLearning \
+  --start-date 2026-01-01 \
+  --end-date 2026-06-30 \
+  --max-posts 100 \
+  --reddit-cookie "$REDDIT_COOKIE" \
+  --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0"
+```
+
+Quick validation:
+
+```bash
+python3 -c "import os; v=os.getenv('REDDIT_COOKIE',''); print(bool(v), len(v))"
+```
+
+Expected output: `True` and a length greater than zero.
+
+Notes:
+
+- The importer accepts both raw cookie strings and strings prefixed with `Cookie:`.
+- Keep cookies out of git and logs.
+- Rotate/revoke your Reddit session after tests if credentials were exposed.
+
+### Live Retrieval Limitations
+
+This mode uses `r/<sub>/new.json` pagination. It is reliable for recent windows but has practical listing depth limits.
+
+- In real tests, pagination often stops around ~1000 reachable posts for very active feeds.
+- Older date windows may return zero candidates, even when older posts exist.
+- Some environments/networks may receive `403 Blocked`.
+
+Best use cases:
+
+- Recent data collection
+- Incremental daily/weekly updates
+- Smaller/short-term RAG datasets (for example ~1000 posts/comments can already provide useful signal)
+
+### Live Run Artifacts
+
+Each execution writes to `results/runs`:
 
 ```text
 results/runs/
-	subreddit=machinelearning/
-		period=2026-01-01_to_2026-06-30/
-			run=20260708T143221Z/
-				corpus.jsonl
-				coverage_posts.jsonl
-				pending_comments.jsonl
-				checkpoint.json
-				summary.json
-				inputs/
-					links.txt
+  subreddit=<name>/
+    period=<start>_to_<end>/
+      run=<timestamp>__label=<label>/
+        corpus.jsonl
+        coverage_posts.jsonl
+        pending_comments.jsonl
+        checkpoint.json
+        summary.json
+        inputs/links.txt
 ```
 
-Com label:
+## Retrieval Mode 2: Historical Dump Import (Arctic Shift / Similar)
 
-```text
-results/runs/subreddit=machinelearning/period=2026-01-01_to_2026-06-30/run=20260708T143221Z__label=semester-1/
-```
+Use this mode when you need older historical coverage beyond live listing depth.
 
-`run_id` e o timestamp UTC da execucao no formato `YYYYMMDDTHHMMSSZ`.
+Recommended sources/tools:
 
-Isso permite organizar runs por dia/semana/mes/semestre/ano sem sobrescrever artefatos.
+- Arctic Shift project: https://github.com/ArthurHeitmann/arctic_shift
+- Arctic Shift download tool: https://arctic-shift.photon-reddit.com/download-tool
+- Arctic Shift API docs: https://github.com/ArthurHeitmann/arctic_shift/tree/master/api
 
-## Apenas links.txt
-
-```bash
-python3 src/main.py --links-file links.txt --output corpus.jsonl
-```
-
-## Retomar execucao sem reler posts
-
-Por padrao o script salva checkpoint e retoma automaticamente, evitando reler os mesmos links ja processados.
-
-```bash
-python3 src/main.py \
-	--subreddit MachineLearning \
-	--start-date 2026-01-01 \
-	--end-date 2026-06-30 \
-	--output corpus.jsonl \
-	--checkpoint-file checkpoint.json
-```
-
-Se quiser ignorar checkpoint e rodar do zero:
-
-```bash
-python3 src/main.py --subreddit MachineLearning --no-resume
-```
-
-## Campos salvos no JSONL
-
-Cada linha inclui metadados do post e comentarios achatados:
-
-- id, subreddit, title, selftext, author, score, num_comments, created_utc
-- permalink, url, domain, over_18, spoiler, locked, stickied
-- comments: lista com body, score, depth, author, created_utc
-
-## Observacoes importantes
-
-- URL de post + .json normalmente retorna o post e parte da arvore de comentarios.
-- Nem sempre vem tudo: podem existir blocos do tipo more, threads continuadas e limitacoes de profundidade.
-- Use User-Agent proprio e limite conservador de requests.
-- Se Reddit responder `403 Blocked` no cliente Python, o script agora salva um `summary.json` com erro amigavel em vez de stacktrace bruto.
-
-## Quando o ambiente estiver bloqueado (403)
-
-Alguns ambientes de rede/runtime podem ser bloqueados pelo Reddit para scraping direto.
-Nesses casos, voce pode tentar:
-
-- rodar em outro runtime/rede
-- passar cookie de sessao autenticada do navegador (avancado)
-
-Exemplo:
-
-```bash
-python3 src/main.py \
-	--subreddit AskReddit \
-	--start-date 2026-07-08 \
-	--end-date 2026-07-08 \
-	--max-posts 2 \
-	--reddit-cookie 'reddit_session=...; other_cookie=...'
-```
-
-## Metricas no final da execucao
-
-Ao terminar, o script imprime:
-
-- Saved: posts gravados
-- Failed: posts com falha
-- ExpectedComments: soma de num_comments dos posts
-- ExtractedComments: comentarios realmente extraidos (kind t1)
-- PendingCommentIds: ids de comentarios pendentes (vindos de blocos more)
-- Coverage: ExtractedComments / ExpectedComments
-- MorePlaceholders: quantidade de blocos more encontrados
-
-Exemplo:
-
-```text
-Summary Saved=200 Failed=0 ExpectedComments=1000 ExtractedComments=800 PendingCommentIds=340
-Averages ExtractedPerPost=4.00 PendingIdsPerPost=1.70
-```
-
-## Novos arquivos gerados
-
-- `corpus.jsonl`: dados brutos do run
-- `coverage_posts.jsonl`: cobertura por post (expected/extracted/pending antes/depois)
-- `pending_comments.jsonl`: fila de pendencias por post com ids de comentarios faltantes
-- `checkpoint.json`: estado de progresso para retomar aquele run
-- `summary.json`: resumo completo daquela execucao
-- `inputs/links.txt`: snapshot do arquivo de links usado no run (se existir)
-
-## Filtros de qualidade para RAG
-
-- `--rag-min-comment-chars`: descarta comentarios muito curtos no payload derivado de RAG.
-- `--rag-max-comments`: limita quantidade de comentarios no campo derivado para evitar documentos muito grandes.
-
-Esses filtros nao removem os dados brutos do post, apenas o payload derivado em `rag`.
-
-## Logging estruturado
-
-Use `--structured-logs` para emitir eventos JSON por fase (`setup`, `discovery`, `fetch`, `write`, `summary`).
-Isso ajuda a monitorar execucoes longas e facilita troubleshooting em madrugada.
-
-## Rodar testes
-
-```bash
-python3 -m unittest discover -s tests -p 'test_*.py'
-```
-
-## Importar dumps anuais (script separado)
-
-Quando voce ja baixou arquivos JSONL de posts e comments (ex.: Arctic Shift), use o importador dedicado para montar um corpus no mesmo formato do scraper atual.
-
-Exemplo:
+### Import a Single Range
 
 ```bash
 python3 src/import_archive.py \
-	--posts-file ../posts_2021-05-17-2022-05-17.jsonl \
-	--comments-file ../comments_2021-05-17_2022-05-17.jsonl \
-	--subreddit plantedtank \
-	--output results/imported/corpus_plantedtank_2021_2022.jsonl \
-	--summary-file results/imported/summary_plantedtank_2021_2022.json \
-	--tmp-db .tmp/import_plantedtank_2021_2022.sqlite3
+  --posts-file ../posts_2021-05-17-2022-05-17.jsonl \
+  --comments-file ../comments_2021-05-17_2022-05-17.jsonl \
+  --subreddit plantedtank \
+  --output results/imported/corpus_plantedtank_2021_2022.jsonl \
+  --summary-file results/imported/summary_plantedtank_2021_2022.json \
+  --tmp-db .tmp/import_plantedtank_2021_2022.sqlite3
 ```
 
-Notas:
-
-- Esse fluxo e aditivo: nao altera o scraper de `src/main.py`.
-- O importador junta comments aos posts via `link_id` -> `post_id`.
-- `summary` traz volume importado e cobertura agregada.
-- Em dumps historicos, `ExtractedComments` pode ser maior que `num_comments` do post (snapshot em tempos diferentes).
-
-### Importacao em lote (todos os anos baixados)
-
-Para processar automaticamente todos os pares `posts_*.jsonl` e `comments_*.jsonl` de uma pasta:
+### Import All Downloaded Ranges (Batch)
 
 ```bash
 python3 src/import_archive_batch.py \
-	--input-dir .. \
-	--subreddit plantedtank \
-	--output-dir results/imported \
-	--tmp-db-dir .tmp \
-	--skip-existing
+  --input-dir .. \
+  --subreddit plantedtank \
+  --output-dir results/imported \
+  --tmp-db-dir .tmp \
+  --skip-existing
 ```
 
-Opcional para validar sem executar:
+Dry-run preview:
 
 ```bash
 python3 src/import_archive_batch.py --input-dir .. --subreddit plantedtank --dry-run
 ```
 
-## JSON vs JSONL
+### Historical Import Notes
 
-- JSON unico: um unico arquivo com um array gigante. Pior para append e para recuperar em caso de queda.
-- JSONL: uma linha JSON por documento. Melhor para processamento incremental, reprocessamento parcial e pipelines de RAG.
+- This flow is additive and does not modify `src/main.py`.
+- Comments are joined to posts by `link_id -> post_id`.
+- Coverage can be above 1.0 in historical imports because post/comment snapshots were not always captured at exactly the same time.
 
-Para crawler de longa duracao, JSONL e mais robusto.
+## Next Dataset Step: Merge Imported Yearly Corpora
+
+Script (already created): `src/merge_imported_corpus.py`
+
+Purpose:
+
+- Merge multiple yearly imported corpora into one deduplicated corpus.
+- Deduplicate posts by post ID.
+- Merge and deduplicate comments for overlapping posts.
+- Recompute `stats` and `rag` fields.
+
+## RAG Guidance
+
+See `docs/RAG_PIPELINE.md` for a full implementation checklist (cleaning, chunking, embedding, indexing, evaluation).
+
+## Testing
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
 
