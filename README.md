@@ -199,6 +199,40 @@ python3 src/build_rag_chunks.py \
   --max-posts 200
 ```
 
+## Next Dataset Step: Generate Embeddings
+
+Script: `src/build_embeddings.py`
+
+Purpose:
+
+- Read chunk JSONL and generate embedding vectors.
+- Keep chunk metadata + text + embedding in output JSONL.
+- Support resume mode for long runs.
+
+Ollama example:
+
+```bash
+python3 src/build_embeddings.py \
+  --input results/rag/chunks_plantedtank.jsonl \
+  --output results/rag/embeddings_plantedtank.jsonl \
+  --summary-file results/rag/embeddings_plantedtank_summary.json \
+  --provider ollama \
+  --model nomic-embed-text \
+  --ollama-url http://localhost:11434
+```
+
+Resume example:
+
+```bash
+python3 src/build_embeddings.py \
+  --input results/rag/chunks_plantedtank.jsonl \
+  --output results/rag/embeddings_plantedtank.jsonl \
+  --summary-file results/rag/embeddings_plantedtank_summary.json \
+  --provider ollama \
+  --model nomic-embed-text \
+  --resume
+```
+
 ## RAG Guidance
 
 See `docs/RAG_PIPELINE.md` for a full implementation checklist (cleaning, chunking, embedding, indexing, evaluation).
