@@ -22,7 +22,11 @@ def _slug(text: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Batch runner for annual archive imports")
-    parser.add_argument("--input-dir", default="..", help="Directory containing posts_*.jsonl and comments_*.jsonl")
+    parser.add_argument(
+        "--input-dir",
+        default="raw-contents",
+        help="Directory containing posts_*.jsonl and comments_*.jsonl",
+    )
     parser.add_argument("--subreddit", default="", help="Optional subreddit filter")
     parser.add_argument("--output-dir", default="results/imported", help="Directory for corpus/summary outputs")
     parser.add_argument("--tmp-db-dir", default=".tmp", help="Directory for temporary sqlite files")

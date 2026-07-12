@@ -125,8 +125,8 @@ Recommended sources/tools:
 
 ```bash
 python3 src/import_archive.py \
-  --posts-file ../posts_2021-05-17-2022-05-17.jsonl \
-  --comments-file ../comments_2021-05-17_2022-05-17.jsonl \
+  --posts-file raw-contents/posts_2021-05-17-2022-05-17.jsonl \
+  --comments-file raw-contents/comments_2021-05-17_2022-05-17.jsonl \
   --subreddit PlantedTank \
   --output results/imported/corpus_plantedtank_2021_2022.jsonl \
   --summary-file results/imported/summary_plantedtank_2021_2022.json \
@@ -137,7 +137,7 @@ python3 src/import_archive.py \
 
 ```bash
 python3 src/import_archive_batch.py \
-  --input-dir .. \
+  --input-dir raw-contents \
   --subreddit PlantedTank \
   --output-dir results/imported \
   --tmp-db-dir .tmp \
@@ -147,7 +147,7 @@ python3 src/import_archive_batch.py \
 Dry-run preview:
 
 ```bash
-python3 src/import_archive_batch.py --input-dir .. --subreddit PlantedTank --dry-run
+python3 src/import_archive_batch.py --input-dir raw-contents --subreddit PlantedTank --dry-run
 ```
 
 ### Historical Import Notes
