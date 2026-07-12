@@ -233,6 +233,67 @@ python3 src/build_embeddings.py \
   --resume
 ```
 
+## Next Dataset Step: Qdrant Vector Index
+
+Start Qdrant locally with Docker:
+
+```bash
+docker run -d \
+  --name qdrant-reddit \
+  -p 6333:6333 \
+  -v "$PWD/.tmp/qdrant_storage:/qdrant/storage" \
+  qdrant/qdrant
+```
+
+Health check:
+
+```bash
+curl http://localhost:6333/healthz
+```
+
+Create collection (auto-infers vector size from embeddings summary/output):
+
+```bash
+python3 src/qdrant_setup.py \
+  --qdrant-url http://localhost:6333 \
+  --collection plantedtank_chunks \
+  --embeddings-summary-file results/rag/embeddings_plantedtank_summary.json \
+  --embeddings-file results/rag/embeddings_plantedtank.jsonl
+```
+
+Ingest embeddings JSONL into Qdrant:
+
+```bash
+python3 src/qdrant_ingest.py \
+  --embeddings-file results/rag/embeddings_plantedtank.jsonl \
+  --qdrant-url http://localhost:6333 \
+  --collection plantedtank_chunks \
+  --batch-size 128 \
+  --wait \
+  --summary-file results/rag/qdrant_ingest_summary.json
+```
+
+Run a semantic search smoke test:
+
+```bash
+python3 src/qdrant_search.py \
+  --query "How do people manage multiple remote jobs without burnout?" \
+  --qdrant-url http://localhost:6333 \
+  --collection plantedtank_chunks \
+  --top-k 5 \
+  --model nomic-embed-text \
+  --ollama-url http://localhost:11434
+```
+
+Optional filtered search by subreddit:
+
+```bash
+python3 src/qdrant_search.py \
+  --query "tax and legal risks of having two full-time jobs" \
+  --subreddit plantedtank \
+  --top-k 5
+```
+
 ## RAG Guidance
 
 See `docs/RAG_PIPELINE.md` for a full implementation checklist (cleaning, chunking, embedding, indexing, evaluation).

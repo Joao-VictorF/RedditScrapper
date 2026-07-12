@@ -106,6 +106,15 @@ Best practice:
 - Prefer hybrid retrieval (vector + lexical/BM25) over vector-only.
 - Keep metadata filters enabled.
 
+Repository baseline for fast local setup:
+
+1. Start Qdrant (`docker run qdrant/qdrant` on port 6333).
+2. Create collection with `src/qdrant_setup.py` (vector size inferred from embedding summary).
+3. Ingest embeddings with `src/qdrant_ingest.py`.
+4. Validate top-K retrieval with `src/qdrant_search.py`.
+
+This path is intentionally simple and keeps ingestion idempotent by using deterministic point IDs from `chunk_id`.
+
 ## 7) Retrieval and Ranking
 
 Recommended serving flow:
