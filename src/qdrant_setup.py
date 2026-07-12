@@ -126,10 +126,15 @@ def main() -> None:
         print(f"[qdrant-setup] deleted collection={args.collection}")
 
     if not exists:
+        distance_map = {
+            "cosine": "Cosine",
+            "dot": "Dot",
+            "euclid": "Euclid",
+        }
         payload: dict[str, Any] = {
             "vectors": {
                 "size": vector_size,
-                "distance": args.distance.upper(),
+                "distance": distance_map[args.distance],
             }
         }
         create_response = requests.put(collection_url, json=payload, timeout=args.timeout_sec)
