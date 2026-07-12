@@ -127,7 +127,7 @@ Recommended sources/tools:
 python3 src/import_archive.py \
   --posts-file ../posts_2021-05-17-2022-05-17.jsonl \
   --comments-file ../comments_2021-05-17_2022-05-17.jsonl \
-  --subreddit plantedtank \
+  --subreddit PlantedTank \
   --output results/imported/corpus_plantedtank_2021_2022.jsonl \
   --summary-file results/imported/summary_plantedtank_2021_2022.json \
   --tmp-db .tmp/import_plantedtank_2021_2022.sqlite3
@@ -138,7 +138,7 @@ python3 src/import_archive.py \
 ```bash
 python3 src/import_archive_batch.py \
   --input-dir .. \
-  --subreddit plantedtank \
+  --subreddit PlantedTank \
   --output-dir results/imported \
   --tmp-db-dir .tmp \
   --skip-existing
@@ -147,7 +147,7 @@ python3 src/import_archive_batch.py \
 Dry-run preview:
 
 ```bash
-python3 src/import_archive_batch.py --input-dir .. --subreddit plantedtank --dry-run
+python3 src/import_archive_batch.py --input-dir .. --subreddit PlantedTank --dry-run
 ```
 
 ### Historical Import Notes
@@ -277,7 +277,7 @@ Run a semantic search smoke test:
 
 ```bash
 python3 src/qdrant_search.py \
-  --query "How do people manage multiple remote jobs without burnout?" \
+  --query "How can I reduce algae in a high-light planted tank?" \
   --qdrant-url http://localhost:6333 \
   --collection plantedtank_chunks \
   --top-k 5 \
@@ -289,8 +289,8 @@ Optional filtered search by subreddit:
 
 ```bash
 python3 src/qdrant_search.py \
-  --query "tax and legal risks of having two full-time jobs" \
-  --subreddit plantedtank \
+  --query "Best beginner stem plants for low-tech aquariums" \
+  --subreddit PlantedTank \
   --top-k 5
 ```
 
